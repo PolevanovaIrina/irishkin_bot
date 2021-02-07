@@ -1,10 +1,13 @@
+import asyncio
 import os
 import shutil
+import subprocess
+from concurrent.futures.process import ProcessPoolExecutor
+from concurrent.futures.thread import ThreadPoolExecutor
 
 from aiogram import Bot, types
 from aiogram.dispatcher import Dispatcher
 from aiogram.utils import executor
-
 
 from aiogram.types import ReplyKeyboardRemove, \
     ReplyKeyboardMarkup, KeyboardButton, \
@@ -35,12 +38,15 @@ loader = transforms.Compose([
     transforms.ToTensor()])
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-def image_loader(image_name, i ):
-    if i ==1:
-      image = Image.open(image_name)
-      image = loader(image).unsqueeze(0)
+
+
+def image_loader(image_name, i):
+    if i == 1:
+        image = Image.open(image_name)
+        image = loader(image).unsqueeze(0)
 
     return image.to(device, torch.float)
+
 
 class ContentLoss(nn.Module):
 
@@ -52,6 +58,7 @@ class ContentLoss(nn.Module):
     def forward(self, input):
         self.loss = F.mse_loss(input, self.target)
         return input
+
 
 class StyleLoss_1(nn.Module):
 
@@ -67,8 +74,7 @@ class StyleLoss_1(nn.Module):
             self.mask = torch.addcmul(self.one, self.one, mask, value=-1)
             self.style_weight = style_weight
             self.mask = torch.cat(target_feature.size()[1] * [self.mask.unsqueeze(0)]).unsqueeze(0).detach()
-            self.target = self.gram_matrix(target_feature * self.mask).detach()
-
+            self.target = self.gram_matrix(target_feature * self.mask.to(device)).detach()
 
     def gram_matrix(self, input):
         batch_size, f_map_num, h, w = input.size()
@@ -83,10 +89,11 @@ class StyleLoss_1(nn.Module):
             self.loss = F.mse_loss(G, self.target)
             self.loss = self.loss * self.style_weight
         else:
-            G = self.gram_matrix(input * self.mask)
+            G = self.gram_matrix(input * self.mask.to(device))
             self.loss = F.mse_loss(G, self.target)
             self.loss = self.loss * self.style_weight
         return input
+
 
 class Normalization(nn.Module):
 
@@ -98,15 +105,17 @@ class Normalization(nn.Module):
     def forward(self, img):
         return (img - self.mean) / self.std
 
+
 cnn = models.vgg19_bn(pretrained=True).features.to(device).eval()
+
 
 class Style_Transfer:
 
-    def __init__(self, style_img_1, content_img, background, model_seg, cnn, num_steps=8):
+    def __init__(self, style_img_1, content_img, background, model_seg, cnn, num_steps=250):
 
         self.cnn_normalization_mean = torch.tensor([0.485, 0.456, 0.406]).to(device)
         self.cnn_normalization_std = torch.tensor([0.229, 0.224, 0.225]).to(device)
-        self.style_weights = [0.75, 0.5, 0.2, 0.2, 0.2]
+        self.style_weights = [1, 1, 1, 300, 300]
         self.content_layers = ['conv_4']
         self.style_layers = ['conv_1', 'conv_2', 'conv_3', 'conv_4', 'conv_5']
         self.cnn = cnn
@@ -116,7 +125,7 @@ class Style_Transfer:
         self.input_img = content_img.clone()
         self.model_seg = model_seg
         self.num_steps = num_steps
-        self.style_weight_1 = 100000000
+        self.style_weight_1 = 1000000
         self.style_loss = None
 
     def gram_matrix(self, input):
@@ -192,7 +201,7 @@ class Style_Transfer:
         print('Building the style transfer model..')
         image = self.content_img
         with torch.no_grad():
-            prediction = self.model_seg(image)[0][0]
+            prediction = self.model_seg(image.cpu())[0][0]
         mask = (prediction > 0).cpu().numpy().astype(np.uint8)
         mask = torch.from_numpy(mask)
         mask = mask.to(dtype=torch.float32)
@@ -212,7 +221,6 @@ class Style_Transfer:
                 model(self.input_img)
 
                 style_score_1 = 0
-                style_score_2 = 0
                 content_score = 0
 
                 for sl in style_losses:
@@ -221,7 +229,7 @@ class Style_Transfer:
                     content_score += cl.loss
 
                 # взвешивание ощибки
-                style_score_1 *= 10000000
+                style_score_1 *= self.style_weight_1
                 content_score *= 1
 
                 loss = style_score_1 + content_score
@@ -249,7 +257,7 @@ TOKEN = '1470750612:AAHyjk4QmXufqgzjR9kdTpc0WcDmHHnEyXY'
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
-button_hi = KeyboardButton('Привет! 👋')
+button_hi = KeyboardButton('Бот, проснись👋')
 
 greet_kb = ReplyKeyboardMarkup(resize_keyboard=True)
 greet_kb.add(button_hi)
@@ -259,9 +267,18 @@ users_type = {}
 test_counter = 0
 
 inline_kb_full = InlineKeyboardMarkup(row_width=3)
-inline_kb_full.add(InlineKeyboardButton('Сделай из лета зиму', callback_data='btn2'))
-inline_kb_full.add(InlineKeyboardButton('Перенеси стиль на фон за мной', callback_data='btn1'))
-inline_kb_full.add(InlineKeyboardButton('Перенеси стиль на всё фото', callback_data='btn3'))
+inline_kb_full_2 = InlineKeyboardMarkup(row_width=3)
+inline_kb_full_3 = InlineKeyboardMarkup(row_width=3)
+inline_kb_full.add(InlineKeyboardButton('Перенеси стиль на фон за мной👩👨', callback_data='btn1'))
+inline_kb_full.add(InlineKeyboardButton('Перенеси стиль на всё фото🖼', callback_data='btn3'))
+inline_kb_full.add(InlineKeyboardButton('Сделай из лета зиму🥵🥶', callback_data='btn2'))
+inline_kb_full_2.add(InlineKeyboardButton('Круто, спасибо!', callback_data='btn4'))
+inline_kb_full_2.add(InlineKeyboardButton('Как-то так себе(', callback_data='btn5'))
+inline_kb_full_3.add(InlineKeyboardButton('Круто, спасибо!', callback_data='btn6'))
+inline_kb_full_3.add(InlineKeyboardButton('Как-то так себе(', callback_data='btn7'))
+inline_kb_full.add(InlineKeyboardButton('Поспи💤', callback_data='btn8'))
+
+
 
 @dp.callback_query_handler(lambda c: c.data == 'btn1')
 async def process_callback_button1(callback_query: types.CallbackQuery):
@@ -270,6 +287,7 @@ async def process_callback_button1(callback_query: types.CallbackQuery):
     users_photo.update({callback_query.from_user.id: []})
     users_type.update({callback_query.from_user.id: 'Background_style'})
     await bot.send_message(callback_query.from_user.id, 'Загрузите фото стиля')
+
 
 @dp.callback_query_handler(lambda c: c.data == 'btn3')
 async def process_callback_button1(callback_query: types.CallbackQuery):
@@ -289,25 +307,66 @@ async def process_callback_button1(callback_query: types.CallbackQuery):
     users_type.update({callback_query.from_user.id: 'WinterSummer'})
     print('new user', users_photo)
 
+@dp.callback_query_handler(lambda c: c.data == 'btn4')
+async def process_callback_button1(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, 'Спасибо, я старался:3')
+
+@dp.callback_query_handler(lambda c: c.data == 'btn5')
+async def process_callback_button1(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, 'Такое бывает, у меня не всегда получается хорошо, прости :с')
+    await bot.send_message(callback_query.from_user.id, 'У меня лучше получается обрабатывать фото пейзажей - гор, полей, лесов) Дай мне ещё один шанс, загрузив подобное фото!')
+
+@dp.callback_query_handler(lambda c: c.data == 'btn6')
+async def process_callback_button1(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, 'Спасибо, я старался:3')
+
+@dp.callback_query_handler(lambda c: c.data == 'btn7')
+async def process_callback_button1(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, 'Такое бывает, у меня не всегда получается хорошо, прости :с')
+    await bot.send_message(callback_query.from_user.id, 'Мне иногда сложно переносить стиль, если он не ярко выражен, попробуй скинуть мне стиль Ван-Гога или Мунка, где есть характерные цвета и текстуры, мне будет проще)')
+    await bot.send_message(callback_query.from_user.id, 'Давай попробуем с другим фото)')
+
+@dp.callback_query_handler(lambda c: c.data == 'btn8')
+async def process_callback_button1(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, 'Я спать💤')
+    await asyncio.sleep(5)
+
+
+
 @dp.message_handler(commands=['start'])
 async def process_start_command(message: types.Message):
-    await bot.send_message(message.from_user.id, "Привет, я бот, который может 2 вещи:  Перенесли стиль с одной фотографии на другую, а так же сделать из летнего пейзажа зимний и наоборот", reply_markup=greet_kb)
-    await bot.send_message(message.from_user.id, "Чтобы сказать мне что сделать, нажни на клавиатуре кнопку 'Привет! 👋", reply_markup=inline_kb_full)
+    await bot.send_message(message.from_user.id,
+                           "Привет! Я бот, который может 2 вещи:  Перенесли стиль с одной фотографии на другую 2мя способами : 1) Перенести стиль на всё фото, 2)Перенести стиль на задний фон человека или группы людей, а так же сделать из летнего пейзажа зимний, не изменяя людей на фотографии, если они есть",
+                           reply_markup=greet_kb)
+    await bot.send_message(message.from_user.id,
+                           "Чтобы сказать мне что сделать, нажните на клавиатуре кнопку 'Бот, проснись👋'")
+    await bot.send_message(message.from_user.id,
+                           "После нажатия кнопки появится меню, где вы можете выбрать, что делать боту. Если вы случайно нажали не ту кнопку, то не следуйте указаниям бота, а просто нажмите нужную")
+    await bot.send_message(message.from_user.id,
+                           "Если вы отправляете фото с компьютера, не забудьте поставить галочку напротив Compress image, иначе бот не сможет обработать ваше фото")
+    await bot.send_message(message.from_user.id,
+                           "Если вы выбрали перенести стиль с одной фотографии на другую, то боту понадобится время на то, чтобы обработать фотографию, обычно это занимает меньше минуты, но всё равно ощутимое время, " +
+"так что если бот ответил вам не сразу, то всё нормально, ему нужно время сделать свои ботовские дела) Если вам скучно ждать, можете снова нажать кнопку 'Бот, проснись👋' и попробовать функцию 'Сделай из зимы лето'")
 
 
 @dp.message_handler(commands=['help'])
 async def process_help_command(message: types.Message):
-    await bot.send_message(message.from_user.id,"Нажми на кнопку 'Привет! 👋' и я обработаю фото для тебя!")
+    await bot.send_message(message.from_user.id, "Нажми на кнопку 'Бот, проснись👋' и я обработаю фото для тебя!")
+    await bot.send_message(message.from_user.id, "Напишите команду '\start' чтобы получить подробную информацию обо мне")
 
 
 @dp.message_handler()
 async def echo_message(message: types.Message):
     global test_counter
     test_counter += 1
-    if message.text.lower() == 'Привет! 👋':
-        await message.reply('Привет! 👋', reply_markup=inline_kb_full)
-    else:
-        await message.reply(f"Я не совсем понимаю тебя,нажми кнопку 'Привет! 👋' и выбери, что я могу для тебя сделать ", reply_markup=inline_kb_full)
+    await message.reply(
+        f"Bыбери, что я могу для тебя сделать",
+        reply_markup=inline_kb_full)
 
 
 @dp.message_handler(content_types=['photo'])
@@ -317,18 +376,21 @@ async def image_handler(message: types.Message):
     user_id = message.from_user.id
 
     input_dir = f'./input_images/{user_id}'
+    input_dir_2 = f'./input_images_2/{user_id}+{test_counter}'
     input_dir_nn = f'../input_images/{user_id}'
     output_dir = f'./output_images/{user_id}'
     output_dir_nn = f'../output_images/{user_id}'
 
     if users_type.get(user_id) is None:
-        await message.reply('Я не понимаю, что мне с этим делать, выберите, пожалуйста', reply_markup=inline_kb_full)
+        await message.reply('Я не понимаю, что мне с этим делать, но вот, что я могу для тебя сделать', reply_markup=inline_kb_full)
     else:
-        if os.path.isdir(input_dir) == False:
+        if not os.path.isdir(input_dir_2):
+            os.mkdir(input_dir_2)
+        if not os.path.isdir(input_dir):
             os.mkdir(input_dir)
         if users_type.get(user_id) == 'Background_style':
             file = await bot.get_file(message.photo[-1].file_id)
-            await message.photo[-1].download(f'{input_dir}/style_image.jpg')
+            await message.photo[-1].download(f'{input_dir_2}/style_image.jpg')
             photos = users_photo.get(user_id, [])
             photos.append(file)
             users_photo[user_id] = photos
@@ -338,11 +400,9 @@ async def image_handler(message: types.Message):
 
         elif users_type.get(user_id) == 'Change_style':
             file = await bot.get_file(message.photo[-1].file_id)
-            await message.photo[-1].download(f'{input_dir}/style_image.jpg')
-            # print(users_photo.get(user_id))
+            await message.photo[-1].download(f'{input_dir_2}/style_image.jpg')
             photos = users_photo.get(user_id, [])
             photos.append(file)
-            # print(users_photo)
             users_photo[user_id] = photos
             users_type.update({user_id: 'Background_content'})
             background = 0
@@ -351,25 +411,31 @@ async def image_handler(message: types.Message):
 
 
         elif users_type.get(user_id) == 'Background_content':
-            # todo: тут падало без await
             file = await bot.get_file(message.photo[-1].file_id)
-            await message.photo[-1].download(f'{input_dir}/content_image.jpg')
+            await message.photo[-1].download(f'{input_dir_2}/content_image.jpg')
             photos = users_photo.get(user_id, [])
             photos.append(file)
             users_photo[user_id] = photos
-            await bot.send_message(message.from_user.id, 'Чуть-чуть магии *думою*')
-            content_image = image_loader(f'{input_dir}/content_image.jpg', 1)
-            style_image = image_loader(f'{input_dir}/style_image.jpg', 1)
+            await bot.send_message(message.from_user.id, 'Чуть-чуть магии...')
+            content_image = image_loader(f'{input_dir_2}/content_image.jpg', 1)
+            style_image = image_loader(f'{input_dir_2}/style_image.jpg', 1)
             style_transfer = Style_Transfer(style_image, content_image, background, model_seg, cnn)
-            output = style_transfer.run_style_transfer()
-            output = transforms.ToPILImage()(output[0])
-            output.save(f'{input_dir}/content_image.jpg')
-            file = types.InputFile(f'{input_dir}/content_image.jpg')
 
+            loop = asyncio.get_event_loop()
+            thread_executor = ThreadPoolExecutor(max_workers=1)
+            future = loop.run_in_executor(thread_executor, style_transfer.run_style_transfer)
+            output = await future
+
+            output = transforms.ToPILImage()(output[0].cpu())
+            output.save(f'{input_dir_2}/content_image.jpg')
+            file = types.InputFile(f'{input_dir_2}/content_image.jpg')
+            await bot.send_message(message.from_user.id, 'Я сделал!')
             await bot.send_photo(user_id, photo=file)
-            await bot.send_message(message.from_user.id, 'Держи')
-            if os.path.isdir(input_dir):
-                shutil.rmtree(input_dir)
+            await bot.send_message(message.from_user.id, 'Как тебе?', reply_markup=inline_kb_full_3)
+            del users_photo[user_id]
+            del users_type[user_id]
+            if os.path.isdir(input_dir_2):
+                shutil.rmtree(input_dir_2)
             if os.path.isdir(output_dir):
                 shutil.rmtree(output_dir)
 
@@ -378,12 +444,12 @@ async def image_handler(message: types.Message):
         else:
 
             try:
-                os.mkdir(input_dir)
+                device = torch.device("cpu")
 
                 await message.photo[-1].download(f'{input_dir}/image.jpg')
 
                 img = image_loader(f'{input_dir}/image.jpg', 1)
-                img = transforms.ToPILImage()(img[0])
+                img = transforms.ToPILImage()(img[0].to(device))
                 img.save(f'{input_dir}/image.jpg')
                 img = image_loader(f'{input_dir}/image.jpg', 1)
 
@@ -394,27 +460,33 @@ async def image_handler(message: types.Message):
                              f'--results_dir {output_dir_nn}') != 0:
                     raise Exception('Something in neural network went wrong!')
 
+
                 with torch.no_grad():
-                    prediction = model_seg(img)[0][0]
+                    prediction = model_seg(img.cpu())[0][0]
                 mask = (prediction > 0).cpu().numpy().astype(np.uint8)
                 mask = torch.from_numpy(mask)
                 mask = mask.to(dtype=torch.float32)
 
                 one = torch.ones_like(mask)
-                img_after = image_loader(f'{output_dir}/summer2winter_yosemite_pretrained/test_latest/images/image_fake.png', 1)
-                img_after = torch.addcmul(img_after, img_after, mask, value=-1)
+                img_after = image_loader(
+                    f'{output_dir}/summer2winter_yosemite_pretrained/test_latest/images/image_fake.png', 1)
+                img_after = torch.addcmul(img_after.cpu(), img_after.cpu(), mask.cpu(), value=-1)
                 mask = torch.addcmul(one, one, mask, value=-1)
                 mask = torch.cat(img.size()[1] * [mask.unsqueeze(0)]).unsqueeze(0).detach()
-                img = torch.addcmul(img, img, mask, value=-1)
-                img_after = torch.addcmul(img_after, img, one, value=1)
-                img_fin = transforms.ToPILImage()(img_after[0])
+                img = torch.addcmul(img.cpu(), img.cpu(), mask.cpu(), value=-1)
+                img_after = torch.addcmul(img_after.cpu(), img.cpu(), one.cpu(), value=1)
+                img_fin = transforms.ToPILImage()(img_after[0].cpu())
                 img_fin.save(f'{output_dir}/summer2winter_yosemite_pretrained/test_latest/images/image_fake.png')
+
+                await bot.send_message(message.from_user.id, 'Я сделал!')
 
                 file = types.InputFile(
                     f'{output_dir}/summer2winter_yosemite_pretrained/test_latest/images/image_fake.png')
 
-
                 await bot.send_photo(user_id, photo=file)
+
+                await bot.send_message(message.from_user.id, 'Как тебе?', reply_markup=inline_kb_full_2)
+
             finally:
                 if os.path.isdir(input_dir):
                     shutil.rmtree(input_dir)
@@ -423,7 +495,10 @@ async def image_handler(message: types.Message):
 
 
 if __name__ == '__main__':
-    shutil.rmtree('../input_images')
-    os.mkdir('../input_images')
+    if os.path.isdir('./input_images'):
+        shutil.rmtree('./input_images')
+    os.mkdir('./input_images')
+    test_counter = 0
 
+    print('Starting bot!')
     executor.start_polling(dp)
