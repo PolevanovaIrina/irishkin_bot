@@ -257,7 +257,7 @@ TOKEN = '1470750612:AAHyjk4QmXufqgzjR9kdTpc0WcDmHHnEyXY'
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
-button_hi = KeyboardButton('Бот, проснись👋')
+button_hi = KeyboardButton('Бот, проснись👋 ')
 
 greet_kb = ReplyKeyboardMarkup(resize_keyboard=True)
 greet_kb.add(button_hi)
@@ -376,8 +376,8 @@ async def image_handler(message: types.Message):
     user_id = message.from_user.id
 
     input_dir = f'./input_images/{user_id}'
-    input_dir_2 = f'./input_images_2/{user_id}+{test_counter}'
     input_dir_nn = f'../input_images/{user_id}'
+    input_dir_2 = f'./input_images_2/{user_id}+{test_counter}'
     output_dir = f'./output_images/{user_id}'
     output_dir_nn = f'../output_images/{user_id}'
 
@@ -454,7 +454,7 @@ async def image_handler(message: types.Message):
                 img = image_loader(f'{input_dir}/image.jpg', 1)
 
                 if os.system(f'cd pytorch-CycleGAN-and-pix2pix && '
-                             f'test.py --dataroot {input_dir_nn} '
+                             f'python test.py --dataroot {input_dir_nn} '
                              f'--name summer2winter_yosemite_pretrained '
                              f'--model test --no_dropout --gpu_ids -1 '
                              f'--results_dir {output_dir_nn}') != 0:
